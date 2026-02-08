@@ -15,7 +15,8 @@ server {
   client_max_body_size 1m;
 
   # Lazy DNS resolution: backend containers can start after nginx
-  resolver 127.0.0.11 valid=30s;
+  # Docker: 127.0.0.11 / Podman: 10.89.0.1
+  resolver ${DDBJ_SEARCH_RESOLVER} valid=30s;
 
   # === Special case: entry detail as JSON/JSONLD ===
   # Frontend URL with .json/.jsonld extension -> rewrite to API path -> API Server
