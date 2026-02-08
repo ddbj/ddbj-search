@@ -70,10 +70,10 @@ podman-compose up -d
 
 ```bash
 # フロントエンドにアクセス
-curl http://localhost:8000/search
+curl http://localhost:8080/search
 
 # API にアクセス
-curl http://localhost:8000/search/api/service-info
+curl http://localhost:8080/search/api/service-info
 ```
 
 ## 環境構築
@@ -95,6 +95,10 @@ curl http://localhost:8000/search/api/service-info
 ```bash
 # === Environment ===
 DDBJ_SEARCH_ENV=production   # dev, staging, production
+
+# === Nginx Port Binding ===
+DDBJ_SEARCH_NGINX_BIND_HOST=0.0.0.0   # バインドアドレス (dev: 127.0.0.1)
+DDBJ_SEARCH_NGINX_BIND_PORT=18080     # バインドポート (dev: 8080)
 ```
 
 `DDBJ_SEARCH_ENV` により、コンテナ名 (`ddbj-search-nginx-{env}`)、Docker network 名 (`ddbj-search-network-{env}`)、および nginx upstream のコンテナ名 (`ddbj-search-front-{env}`, `ddbj-search-api-{env}`) が自動決定される。

@@ -10,7 +10,7 @@ services:
       DDBJ_SEARCH_ENV: ${DDBJ_SEARCH_ENV}
       DDBJ_SEARCH_ES_ENABLED: ${DDBJ_SEARCH_ES_ENABLED:-}
     ports:
-      - 0.0.0.0:8000:80
+      - ${DDBJ_SEARCH_NGINX_BIND_HOST}:${DDBJ_SEARCH_NGINX_BIND_PORT}:80
     networks:
       - ddbj-search-network
     init: true
