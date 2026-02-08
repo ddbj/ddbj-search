@@ -1,21 +1,9 @@
-# Frontend container
-upstream ddbj-search-front {
-  server ddbj-search-front-${DDBJ_SEARCH_ENV}:3000;
-  keepalive 8;
-}
-
-# API Server container
-upstream ddbj-search-api {
-  server ddbj-search-api-${DDBJ_SEARCH_ENV}:8080;
-  keepalive 8;
-}
-
 server {
   listen 80;
   listen [::]:80;
   server_name _;
 
-  # --- Common proxy settings (inherited by all location blocks) ---
+  # --- Common settings ---
   proxy_http_version 1.1;
   proxy_set_header Host $host;
   proxy_set_header X-Real-IP $remote_addr;
@@ -26,18 +14,23 @@ server {
   # Bulk POST body size (up to 1000 IDs)
   client_max_body_size 1m;
 
+  # Lazy DNS resolution: backend containers can start after nginx
+  resolver 127.0.0.11 valid=30s;
+
   # === Special case: entry detail as JSON/JSONLD ===
   # Frontend URL with .json/.jsonld extension -> rewrite to API path -> API Server
   # e.g. /search/entry/bioproject/PRJNA16.json -> /search/api/entries/bioproject/PRJNA16.json
   location ~ ^/search/entry/([^/]+)/([^/]+)\.(json|jsonld)$ {
+    set $api_backend "http://ddbj-search-api-${DDBJ_SEARCH_ENV}:8080";
     rewrite ^/search/entry/(.+)\.(json|jsonld)$ /search/api/entries/$1.$2 break;
-    proxy_pass http://ddbj-search-api;
+    proxy_pass $api_backend;
   }
 
   # === API Server ===
   # Pass-through: no path rewrite, backend receives full path
   location /search/api {
-    proxy_pass http://ddbj-search-api;
+    set $api_backend "http://ddbj-search-api-${DDBJ_SEARCH_ENV}:8080";
+    proxy_pass $api_backend;
   }
 
   # === Elasticsearch read-only proxy (optional) ===
@@ -54,7 +47,6 @@ server {
       deny all;
     }
 
-    resolver 127.0.0.11 valid=30s;
     set $es_backend "http://ddbj-search-es-${DDBJ_SEARCH_ENV}:9200";
     rewrite ^/search/resources(.*)$ $1 break;
     proxy_pass $es_backend;
@@ -70,7 +62,6 @@ server {
       deny all;
     }
 
-    resolver 127.0.0.11 valid=30s;
     set $es_backend "http://ddbj-search-es-${DDBJ_SEARCH_ENV}:9200";
     rewrite ^/search/resources(.*)$ $1 break;
     proxy_pass $es_backend;
@@ -92,6 +83,7 @@ server {
 
   # === Frontend (catch-all) ===
   location /search {
-    proxy_pass http://ddbj-search-front;
+    set $front_backend "http://ddbj-search-front-${DDBJ_SEARCH_ENV}:3000";
+    proxy_pass $front_backend;
   }
 }
