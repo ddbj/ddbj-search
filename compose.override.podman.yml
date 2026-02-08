@@ -1,3 +1,0 @@
-services:
-  nginx:
-    userns_mode: "keep-id"

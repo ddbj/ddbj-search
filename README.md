@@ -54,9 +54,8 @@ docker compose up -d
 ### 環境起動 (Staging / Production)
 
 ```bash
-# 1. 環境変数と override を設定
+# 1. 環境変数を設定
 cp env.staging .env  # または env.production
-cp compose.override.podman.yml compose.override.yml
 
 # 2. Podman network 作成（初回のみ、既に存在していてもエラーにならない）
 podman network create ddbj-search-network-staging || true
@@ -83,7 +82,6 @@ curl http://localhost:8080/search/api/service-info
 | ファイル | 説明 |
 |---------|------|
 | `compose.yml` | 統合版 Docker Compose |
-| `compose.override.podman.yml` | Podman 用の差分設定 |
 | `env.dev` | 開発環境 |
 | `env.staging` | ステージング環境 |
 | `env.production` | 本番環境 |
