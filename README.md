@@ -2,16 +2,16 @@
 
 [DDBJ Search](https://ddbj.nig.ac.jp/search) の nginx reverse proxy。
 
+## 関連プロジェクト
+
+- [ddbj-search-api](https://github.com/ddbj/ddbj-search-api) - RESTful API サーバー
+- [ddbj-search-converter](https://github.com/ddbj/ddbj-search-converter) - データ投入用パイプラインツール (Elasticsearch 管理)
+- [ddbj-search-front](https://github.com/ddbj/ddbj-search-front) - フロントエンド
+
 ## 概要
 
 DDBJ Search は、BioProject / BioSample / SRA / JGA データを横断的に検索・取得するための Web アプリケーション。
 このリポジトリは、フロントエンドと API サーバーへのリクエストルーティングを担う nginx reverse proxy を管理する。
-
-**関連プロジェクト:**
-
-- [ddbj-search-converter](https://github.com/ddbj/ddbj-search-converter) - データ投入用パイプラインツール (Elasticsearch 管理)
-- [ddbj-search-api](https://github.com/ddbj/ddbj-search-api) - RESTful API サーバー
-- [ddbj-search-front](https://github.com/ddbj/ddbj-search-front) - フロントエンド
 
 ### システム構成
 
