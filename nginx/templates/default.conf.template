@@ -6,6 +6,17 @@ map $http_user_agent $ddbj_search_blocked_ua {
   "~*Bytespider" 1;
 }
 
+# Static upstream resolution at startup via Podman / Docker internal DNS.
+# Backend containers must already be running on the shared network (= start order:
+# api, front -> nginx). Re-create the backend -> recreate nginx to refresh IPs.
+upstream ddbj_search_api {
+  server ddbj-search-api-${DDBJ_SEARCH_ENV}:8080;
+}
+
+upstream ddbj_search_front {
+  server ddbj-search-front-${DDBJ_SEARCH_ENV}:3000;
+}
+
 server {
   listen 80;
   listen [::]:80;
@@ -26,58 +37,18 @@ server {
   # Bulk POST body size (up to 1000 IDs)
   client_max_body_size 1m;
 
-  # Lazy DNS resolution: backend containers can start after nginx
-  # Docker: 127.0.0.11 / Podman: 10.89.0.1
-  resolver ${DDBJ_SEARCH_RESOLVER} valid=30s;
-
   # === Special case: entry detail as JSON/JSONLD ===
   # Frontend URL with .json/.jsonld extension -> rewrite to API path -> API Server
   # e.g. /search/entry/bioproject/PRJNA16.json -> /search/api/entries/bioproject/PRJNA16.json
   location ~ ^/search/entry/([^/]+)/([^/]+)\.(json|jsonld)$ {
-    set $api_backend "http://ddbj-search-api-${DDBJ_SEARCH_ENV}:8080";
     rewrite ^/search/entry/(.+)\.(json|jsonld)$ /search/api/entries/$1.$2 break;
-    proxy_pass $api_backend;
+    proxy_pass http://ddbj_search_api;
   }
 
   # === API Server ===
   # Pass-through: no path rewrite, backend receives full path
   location /search/api {
-    set $api_backend "http://ddbj-search-api-${DDBJ_SEARCH_ENV}:8080";
-    proxy_pass $api_backend;
-  }
-
-  # === Elasticsearch read-only proxy (optional) ===
-  # Enable by setting DDBJ_SEARCH_ES_ENABLED=true in .env
-  # Allowed: _search, _msearch (GET/POST), _doc (GET)
-
-  location ~ ^/search/resources/[^/]+/(_search|_msearch)$ {
-    set $es_enabled "${DDBJ_SEARCH_ES_ENABLED}";
-    if ($es_enabled != "true") {
-      return 404;
-    }
-
-    limit_except GET POST {
-      deny all;
-    }
-
-    set $es_backend "http://ddbj-search-es-${DDBJ_SEARCH_ENV}:9200";
-    rewrite ^/search/resources(.*)$ $1 break;
-    proxy_pass $es_backend;
-  }
-
-  location ~ ^/search/resources/[^/]+/_doc/[^/]+$ {
-    set $es_enabled "${DDBJ_SEARCH_ES_ENABLED}";
-    if ($es_enabled != "true") {
-      return 404;
-    }
-
-    limit_except GET {
-      deny all;
-    }
-
-    set $es_backend "http://ddbj-search-es-${DDBJ_SEARCH_ENV}:9200";
-    rewrite ^/search/resources(.*)$ $1 break;
-    proxy_pass $es_backend;
+    proxy_pass http://ddbj_search_api;
   }
 
   # === Backward compatibility redirects ===
@@ -96,7 +67,6 @@ server {
 
   # === Frontend (catch-all) ===
   location /search {
-    set $front_backend "http://ddbj-search-front-${DDBJ_SEARCH_ENV}:3000";
-    proxy_pass $front_backend;
+    proxy_pass http://ddbj_search_front;
   }
 }

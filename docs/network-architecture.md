@@ -146,7 +146,7 @@ location ~ ^/search/entry/([^/]+)/([^/]+)\.(json|jsonld)$ {
 |--------|---------------|------|
 | `/resource/{type}/{accession}` | 301 -> `/search/entry/{type}/{accession}` | 維持 (ブックマーク対応) |
 | `/entry/{type}/{accession}` | 301 -> `/search/entry/{type}/{accession}` | 維持 (ブックマーク対応) |
-| `/resources/*` | - | 廃止 (ES 外部公開の廃止に伴い不要) |
+| `/resources/*` | - | 廃止 (ES 外部公開の廃止に伴い不要、`/search/resources/*` も含めて削除) |
 
 ### External nginx 側
 
@@ -173,14 +173,6 @@ location /entry {
     rewrite ^/entry(.*)$ https://$host/search/entry$1 permanent;
 }
 ```
-
-### 廃止する旧ルート
-
-以下は ES の外部公開廃止に伴い削除する。
-
-- `/resources` -> `/search/resources` (旧 ES リダイレクト)
-- `/search/resources/*` (ES direct access)
-- `/search/resources/{indices}/_msearch` (ES multi-search)
 
 ## 並走 env (release cutover 時の一時構成)
 
@@ -221,10 +213,13 @@ prev と new で 1 系統の ES / dblink / const dir を共有する設計。ス
 
 new 側 api コンテナは prev ES (`ddbj-search-es-staging`) を解決するために `ddbj-search-network-staging` にも multi-network join する。具体的には起動後に `podman network connect ddbj-search-network-staging ddbj-search-api-staging-release-v<id>` を 1 度叩く (compose.yml には書かず deploy 手順に分離、prev / production の通常 compose を汚さないため)。
 
-new 側 front / 内部 nginx は backend が同じ `ddbj-search-network-staging-release-v<id>` 上にいるので multi-network join は不要 (`DDBJ_SEARCH_ES_ENABLED=true` で `/search/resources` を露出する場合のみ内部 nginx も staging network への join が必要)。
+new 側 front / 内部 nginx は backend が同じ `ddbj-search-network-staging-release-v<id>` 上にいるので multi-network join は不要。
+
+### 起動順序
+
+内部 nginx は `upstream` block で backend を静的に解決するため、nginx 起動時点で api / front コンテナが同じ network 上に存在している必要がある。`api -> front -> nginx` の順に `podman-compose up -d` する。backend を作り直したら nginx も `podman-compose restart` で IP 再解決する。
 
 ### 落とし穴
 
 - **prev の compose を down してはいけない**: new 側 api が `ddbj-search-network-staging` に multi-network join しているため、prev compose を down すると network ごと消えて new 側 api も切断される
 - **new env の suffix は cutover 後に compose / env から消す**: 永続側 (`production` / `staging`) に経緯を持ち込まない。cutover の段取りは 各リポジトリの `docs/deployment.md` を参照
-- **resolver IP は network 再作成ごとに変わる**: 新 network を作ったら `podman network inspect ddbj-search-network-<env> --format '{{range .Subnets}}{{.Gateway}}{{end}}'` で取得して `.env` の `DDBJ_SEARCH_RESOLVER` に反映する

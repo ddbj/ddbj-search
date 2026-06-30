@@ -21,7 +21,6 @@ Client
   v
 nginx (this project)
   -> /search/api/*        -> ddbj-search-api (API server)
-  -> /search/resources/*  -> ddbj-search-es (Elasticsearch, optional)
   -> /search/*            -> ddbj-search-front (frontend SPA)
   -> /resource/*          -> redirect to /search/entry/*
   -> /entry/*             -> redirect to /search/entry/*
@@ -100,28 +99,6 @@ DDBJ_SEARCH_NGINX_BIND_PORT=18080     # バインドポート (dev: 8080)
 ```
 
 `DDBJ_SEARCH_ENV` により、コンテナ名 (`ddbj-search-nginx-{env}`)、Docker network 名 (`ddbj-search-network-{env}`)、および nginx upstream のコンテナ名 (`ddbj-search-front-{env}`, `ddbj-search-api-{env}`) が自動決定される。
-
-### Elasticsearch Proxy (オプション)
-
-フロントエンドの ReactiveSearch が Elasticsearch に直接アクセスする必要がある場合、読み取り専用の ES proxy を有効化できる。
-
-`.env` で `DDBJ_SEARCH_ES_ENABLED=true` のコメントを外す:
-
-```bash
-# === Elasticsearch Proxy (optional) ===
-DDBJ_SEARCH_ES_ENABLED=true
-```
-
-有効化すると `/search/resources` で以下のエンドポイントのみ許可される:
-
-| パス | メソッド | 用途 |
-|------|---------|------|
-| `/{indices}/_search` | GET, POST | 検索クエリ |
-| `/{indices}/_msearch` | GET, POST | マルチ検索 (ReactiveSearch) |
-| `/{type}/_doc/{id}` | GET | ドキュメント取得 |
-
-上記以外のパス (`_bulk`, `_delete`, インデックス操作等) はすべて 404 を返す。
-ES コンテナ名は `DDBJ_SEARCH_ENV` から `ddbj-search-es-{env}:9200` として自動解決される。
 
 ### nginx テンプレート
 
