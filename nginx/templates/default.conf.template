@@ -32,6 +32,9 @@ server {
   proxy_set_header X-Real-IP $remote_addr;
   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   proxy_set_header X-Forwarded-Proto https;
+  # Forward caller-supplied X-Request-ID so the API middleware can echo it back;
+  # if absent, $http_x_request_id is empty and the API generates its own UUID.
+  proxy_set_header X-Request-ID $http_x_request_id;
   proxy_set_header Connection "";
 
   # Bulk POST body size (up to 1000 IDs)
