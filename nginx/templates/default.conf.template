@@ -50,22 +50,27 @@ server {
   }
 
   # === Special case: entry detail as JSON/JSONLD ===
-  # Frontend URL with .json/.jsonld extension -> rewrite to API path -> API Server
-  # e.g. /search/entry/bioproject/PRJNA16.json -> /search/api/entries/bioproject/PRJNA16.json
+  # Frontend URL with .json/.jsonld extension -> rewrite to API entry path.
+  # The backend FastAPI router is mounted at the root (e.g. /entries/{type}/{id}.json),
+  # not under /search/api, so the rewrite target uses the unprefixed router path.
+  # e.g. /search/entry/bioproject/PRJNA16.json -> /entries/bioproject/PRJNA16.json
   location ~ ^/search/entry/([^/]+)/([^/]+)\.(json|jsonld)$ {
-    rewrite ^/search/entry/(.+)\.(json|jsonld)$ /search/api/entries/$1.$2 break;
+    rewrite ^/search/entry/(.+)\.(json|jsonld)$ /entries/$1.$2 break;
     proxy_pass http://ddbj_search_api;
   }
 
   # === API Server ===
-  # Pass-through: no path rewrite, backend receives full path.
+  # The backend FastAPI router is mounted at the root; the public /search/api
+  # prefix lives only in the OpenAPI `servers` block. nginx therefore strips the
+  # prefix before forwarding so that /search/api/entries/... reaches the router
+  # as /entries/... and matches.
   # Split exact + trailing-slash prefix so that sibling paths like /search/api-doc/
   # (a frontend SPA route) are not captured by a bare /search/api prefix match.
   location = /search/api {
-    proxy_pass http://ddbj_search_api;
+    proxy_pass http://ddbj_search_api/;
   }
   location /search/api/ {
-    proxy_pass http://ddbj_search_api;
+    proxy_pass http://ddbj_search_api/;
   }
 
   # === Backward compatibility redirects ===
