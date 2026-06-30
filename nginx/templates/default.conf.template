@@ -40,6 +40,15 @@ server {
   # Bulk POST body size (up to 1000 IDs)
   client_max_body_size 1m;
 
+  # === favicon ===
+  # We intentionally ship no favicon. Browsers still auto-fetch /favicon.ico,
+  # so swallow it with 204 No Content to keep the console clean.
+  location = /favicon.ico {
+    access_log off;
+    log_not_found off;
+    return 204;
+  }
+
   # === Special case: entry detail as JSON/JSONLD ===
   # Frontend URL with .json/.jsonld extension -> rewrite to API path -> API Server
   # e.g. /search/entry/bioproject/PRJNA16.json -> /search/api/entries/bioproject/PRJNA16.json
