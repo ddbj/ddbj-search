@@ -46,8 +46,13 @@ server {
   }
 
   # === API Server ===
-  # Pass-through: no path rewrite, backend receives full path
-  location /search/api {
+  # Pass-through: no path rewrite, backend receives full path.
+  # Split exact + trailing-slash prefix so that sibling paths like /search/api-doc/
+  # (a frontend SPA route) are not captured by a bare /search/api prefix match.
+  location = /search/api {
+    proxy_pass http://ddbj_search_api;
+  }
+  location /search/api/ {
     proxy_pass http://ddbj_search_api;
   }
 
