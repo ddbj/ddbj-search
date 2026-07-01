@@ -42,8 +42,7 @@ DDBJ Search システム全体のネットワーク構成。
 | Frontend | `/search` | `BASE_PATH=/search` (Next.js basePath) |
 | API Server | `/search/api` | `DDBJ_SEARCH_API_URL_PREFIX=/search/api` |
 
-Frontend / API Server ともに、base path を設定で受け取り、そのまま処理する。
-nginx はパスを trim せず、そのまま転送する (pass-through 方式)。
+Frontend / API Server ともに、base path を設定で受け取る。ただし API Server (FastAPI) の router は root (`/`) に mount されており、`DDBJ_SEARCH_API_URL_PREFIX=/search/api` は OpenAPI schema の `servers` block にだけ反映される (public 側から見た base URL の告知)。したがって nginx は `/search/api/` prefix を strip してから backend に転送する。Frontend (SPA) は `/search` prefix ごと受け取り、basePath として使う。
 
 ## ネットワーク構成図
 
@@ -62,11 +61,12 @@ External nginx (*.nig.ac.jp)
 Internal nginx (ddbj-search-network:80)
   |
   |  [1] /search/entry/{type}/{id}.(json|jsonld)
-  |        -> rewrite to /search/api/entries/{type}/{id}.(json|jsonld)
+  |        -> rewrite to /entries/{type}/{id}.(json|jsonld)
   |        -> ddbj-search-api:8080
   |
   |  [2] /search/api/*
-  |        -> ddbj-search-api:8080 (pass-through)
+  |        -> strip /search/api/ prefix
+  |        -> ddbj-search-api:8080
   |
   |  [3] /search/*
   |        -> ddbj-search-front:3000 (pass-through, catch-all)
@@ -78,7 +78,8 @@ Internal nginx (ddbj-search-network:80)
   |        -> 301 redirect to /search/entry/* (backward compat)
   |
   +-- ddbj-search-api:8080
-  |     url_prefix=/search/api
+  |     router mounted at "/" (root)
+  |     url_prefix=/search/api (openapi servers only)
   |
   +-- ddbj-search-front:3000
   |     basePath=/search
@@ -97,38 +98,43 @@ Internal nginx (ddbj-search-network:80)
 
 ## nginx proxy 方式
 
-### pass-through
+### API Server: `/search/api/` prefix を strip
 
-パスを trim せず、そのまま backend / frontend に転送する。
+FastAPI router は root (`/`) に mount されている (= 個別 endpoint は `/entries/...` や `/db-portal/search` として登録される)。`DDBJ_SEARCH_API_URL_PREFIX=/search/api` は OpenAPI schema の `servers` にだけ反映され、router 自体の path は書き換えない。したがって nginx で prefix を strip して backend に転送する必要がある。strip し忘れると api 側で 404 になる。
 
 ```nginx
-# API Server: pass-through (no trailing slash)
-location /search/api {
-    proxy_pass http://ddbj-search-api;
-    # /search/api/entries/ -> backend receives /search/api/entries/
+# /search/api/ prefix を strip (location + proxy_pass の両方に trailing slash が必要)
+location /search/api/ {
+    proxy_pass http://ddbj-search-api/;
+    # /search/api/entries/... -> backend receives /entries/...
 }
 
-# Frontend: pass-through (no trailing slash)
+# /search/api (trailing slash 無し) は exact match で拾って、sibling SPA route
+# (例: /search/api-doc/) を巻き込まないようにする
+location = /search/api {
+    proxy_pass http://ddbj-search-api/;
+}
+```
+
+### Frontend: pass-through
+
+Frontend (SPA) は basePath `/search` を含めて受け取る。パス trim なし。
+
+```nginx
 location /search {
     proxy_pass http://ddbj-search-front;
     # /search/entry/bioproject/PRJNA16 -> backend receives /search/entry/bioproject/PRJNA16
 }
 ```
 
-メリット:
-
-- nginx 設定がシンプル (rewrite 不要)
-- backend が自身の URL を正しく生成できる (JSON-LD `@id`, Swagger UI, エラーの `instance`)
-- nginx とアプリのログで同じパスが記録される
-
 ### 特殊ケース: entry detail の rewrite
 
 `/search/entry/{type}/{id}.(json|jsonld)` は frontend のパス体系に属するが、
-実際のデータ提供は API Server が行う。nginx で API のパスに rewrite する。
+実際のデータ提供は API Server が行う。nginx で API の router path に rewrite する。API Server は root mount なので rewrite 先も unprefixed で指す (`/entries/...`)。
 
 ```nginx
 location ~ ^/search/entry/([^/]+)/([^/]+)\.(json|jsonld)$ {
-    rewrite ^/search/entry/(.+)\.(json|jsonld)$ /search/api/entries/$1.$2 break;
+    rewrite ^/search/entry/(.+)\.(json|jsonld)$ /entries/$1.$2 break;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
@@ -136,7 +142,11 @@ location ~ ^/search/entry/([^/]+)/([^/]+)\.(json|jsonld)$ {
 }
 ```
 
-これにより API Server は `/search/api/entries/{type}/{id}.(json|jsonld)` として統一的に処理できる。
+これにより API Server は `/entries/{type}/{id}.(json|jsonld)` として通常の router endpoint と統一的に処理できる。
+
+## upstream の静的解決
+
+internal nginx は `upstream` block で backend の container 名を静的に解決する (起動時に 1 度だけ DNS lookup してその IP を hold)。したがって backend を再作成した場合は internal nginx も `podman-compose --env-file .env restart` で再起動して upstream を解決し直す。起動順は `converter → api → front → nginx`。
 
 ## Backward Compatibility
 
