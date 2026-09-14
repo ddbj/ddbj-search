@@ -102,17 +102,21 @@ Internal nginx (ddbj-search-network:80)
 
 FastAPI router は root (`/`) に mount されている (= 個別 endpoint は `/entries/...` や `/db-portal/search` として登録される)。`DDBJ_SEARCH_API_URL_PREFIX=/search/api` は OpenAPI schema の `servers` にだけ反映され、router 自体の path は書き換えない。したがって nginx で prefix を strip して backend に転送する必要がある。strip し忘れると api 側で 404 になる。
 
+backend アドレスは変数で渡す (後述の [backend アドレスの解決](#backend-アドレスの解決))。変数を使うと `proxy_pass` の trailing slash による prefix strip が効かないため、strip は `rewrite` で明示する。
+
 ```nginx
-# /search/api/ prefix を strip (location + proxy_pass の両方に trailing slash が必要)
+# /search/api/ prefix を strip
 location /search/api/ {
-    proxy_pass http://ddbj-search-api/;
+    rewrite ^/search/api/(.*)$ /$1 break;
+    proxy_pass $api_backend;
     # /search/api/entries/... -> backend receives /entries/...
 }
 
 # /search/api (trailing slash 無し) は exact match で拾って、sibling SPA route
 # (例: /search/api-doc/) を巻き込まないようにする
 location = /search/api {
-    proxy_pass http://ddbj-search-api/;
+    rewrite ^/search/api$ / break;
+    proxy_pass $api_backend;
 }
 ```
 
@@ -122,7 +126,7 @@ Frontend (SPA) は basePath `/search` を含めて受け取る。パス trim な
 
 ```nginx
 location /search {
-    proxy_pass http://ddbj-search-front;
+    proxy_pass $front_backend;
     # /search/entry/bioproject/PRJNA16 -> backend receives /search/entry/bioproject/PRJNA16
 }
 ```
@@ -138,15 +142,19 @@ location ~ ^/search/entry/([^/]+)/([^/]+)\.(json|jsonld)$ {
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_pass http://ddbj-search-api;
+    proxy_pass $api_backend;
 }
 ```
 
 これにより API Server は `/entries/{type}/{id}.(json|jsonld)` として通常の router endpoint と統一的に処理できる。
 
-## upstream の静的解決
+## backend アドレスの解決
 
-internal nginx は `upstream` block で backend の container 名を静的に解決する (起動時に 1 度だけ DNS lookup してその IP を hold)。したがって backend を再作成した場合は internal nginx も `podman-compose --env-file .env restart` で再起動して upstream を解決し直す。起動順は `converter → api → front → nginx`。
+internal nginx は backend のアドレスを変数経由の `proxy_pass` で渡し、リクエストごとに名前解決する。backend コンテナは再作成のたびに別の IP を取るので、起動時に 1 度だけ解決して保持する形だと、backend を作り直した瞬間から nginx を手で再起動するまで、その backend 宛の全リクエストが 502 になる。
+
+副次的な効果として、設定のパース時に名前解決が走らないため **起動順序の制約が無い**。nginx は backend が存在しない状態でも起動でき、backend が現れ次第 resolver の TTL 内で追従する。
+
+resolver のアドレスは、コンテナ起動時に自身の `/etc/resolv.conf` から読み出して `conf.d` に書き出す (`nginx/docker-entrypoint.d/15-ddbj-resolver.sh`)。環境ごとに固定値で持つと、container network を別 subnet で作り直した時点で古い値になり、しかも resolver が誤っていると個別の backend ではなく全 backend の lookup が同時に落ちる。Docker (embedded DNS) と Podman (network gateway) でアドレスが異なる点も、この導出で吸収している。
 
 ## Backward Compatibility
 
@@ -227,7 +235,7 @@ new 側 front / 内部 nginx は backend が同じ `ddbj-search-network-staging-
 
 ### 起動順序
 
-内部 nginx は `upstream` block で backend を静的に解決するため、nginx 起動時点で api / front コンテナが同じ network 上に存在している必要がある。`api -> front -> nginx` の順に `podman-compose up -d` する。backend を作り直したら nginx も `podman-compose restart` で IP 再解決する。
+backend アドレスはリクエストごとに解決されるため、起動順序の制約は無い。backend を作り直したあとも nginx 側の操作は要らない。
 
 ### 落とし穴
 

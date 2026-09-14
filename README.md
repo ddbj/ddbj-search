@@ -35,7 +35,9 @@ nginx は ddbj-search-converter が管理する Elasticsearch を参照する AP
 ### 前提条件
 
 - Podman (本番/ステージング) または Docker (開発)
-- ddbj-search-api / ddbj-search-front の環境が起動済み
+- 共有 network (`ddbj-search-network-{env}`) が作成済み
+
+backend (ddbj-search-api / ddbj-search-front) の起動は前提条件ではない。nginx は backend が存在しない状態でも起動し、現れ次第ルーティングを始める ([docs/network-architecture.md](docs/network-architecture.md) の backend アドレスの解決)。
 
 ### 環境起動 (Dev)
 
@@ -98,7 +100,7 @@ DDBJ_SEARCH_NGINX_BIND_HOST=0.0.0.0   # バインドアドレス (dev: 127.0.0.1
 DDBJ_SEARCH_NGINX_BIND_PORT=18080     # バインドポート (dev: 8080)
 ```
 
-`DDBJ_SEARCH_ENV` により、コンテナ名 (`ddbj-search-nginx-{env}`)、Docker network 名 (`ddbj-search-network-{env}`)、および nginx upstream のコンテナ名 (`ddbj-search-front-{env}`, `ddbj-search-api-{env}`) が自動決定される。
+`DDBJ_SEARCH_ENV` により、コンテナ名 (`ddbj-search-nginx-{env}`)、Docker network 名 (`ddbj-search-network-{env}`)、および proxy 先の backend コンテナ名 (`ddbj-search-front-{env}`, `ddbj-search-api-{env}`) が自動決定される。
 
 ### nginx テンプレート
 
@@ -106,6 +108,8 @@ nginx の公式 Docker image は `/etc/nginx/templates/*.template` を envsubst 
 `NGINX_ENVSUBST_FILTER=DDBJ_SEARCH` を設定することで、`DDBJ_SEARCH_` prefix を持つ変数のみが置換され、nginx 固有変数 (`$host`, `$remote_addr` 等) は保護される。
 
 テンプレートは `nginx/templates/default.conf.template` に配置されている。
+
+`nginx/docker-entrypoint.d/15-ddbj-resolver.sh` は、nginx image が起動時に実行する hook。コンテナ自身の `/etc/resolv.conf` から DNS サーバーのアドレスを読み出し、`resolver` ディレクティブとして `conf.d` に書き出す。単一ファイルとして mount しているのは、ディレクトリごと mount すると image 同梱の envsubst 処理などが隠れてしまうため。
 
 ## ドキュメント
 

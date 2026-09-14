@@ -6,17 +6,6 @@ map $http_user_agent $ddbj_search_blocked_ua {
   "~*Bytespider" 1;
 }
 
-# Static upstream resolution at startup via Podman / Docker internal DNS.
-# Backend containers must already be running on the shared network (= start order:
-# api, front -> nginx). Re-create the backend -> recreate nginx to refresh IPs.
-upstream ddbj_search_api {
-  server ddbj-search-api-${DDBJ_SEARCH_ENV}:8080;
-}
-
-upstream ddbj_search_front {
-  server ddbj-search-front-${DDBJ_SEARCH_ENV}:3000;
-}
-
 server {
   listen 80;
   listen [::]:80;
@@ -40,6 +29,22 @@ server {
   # Bulk POST body size (up to 1000 IDs)
   client_max_body_size 1m;
 
+  # Backend addresses are resolved per request rather than once at startup.
+  # A backend that restarts comes back on a different IP, and an address
+  # resolved at startup stays pinned to the dead one until nginx itself is
+  # restarted, which turns every proxied request into a 502. Routing the
+  # address through a variable is what forces the re-resolution: a literal
+  # name is resolved once and cached for the life of the process. It also
+  # removes the start-order requirement, because nothing is looked up while
+  # the configuration is being parsed.
+  #
+  # The resolver address itself is written into conf.d at container start from
+  # the container's own /etc/resolv.conf. Pinning it per environment instead
+  # breaks as soon as the container network is recreated on a different subnet,
+  # and a wrong resolver takes down every backend lookup at once.
+  set $api_backend "http://ddbj-search-api-${DDBJ_SEARCH_ENV}:8080";
+  set $front_backend "http://ddbj-search-front-${DDBJ_SEARCH_ENV}:3000";
+
   # === favicon ===
   # We intentionally ship no favicon. Browsers still auto-fetch /favicon.ico,
   # so swallow it with 204 No Content to keep the console clean.
@@ -56,7 +61,7 @@ server {
   # e.g. /search/entry/bioproject/PRJNA16.json -> /entries/bioproject/PRJNA16.json
   location ~ ^/search/entry/([^/]+)/([^/]+)\.(json|jsonld)$ {
     rewrite ^/search/entry/(.+)\.(json|jsonld)$ /entries/$1.$2 break;
-    proxy_pass http://ddbj_search_api;
+    proxy_pass $api_backend;
   }
 
   # === API Server ===
@@ -66,11 +71,16 @@ server {
   # as /entries/... and matches.
   # Split exact + trailing-slash prefix so that sibling paths like /search/api-doc/
   # (a frontend SPA route) are not captured by a bare /search/api prefix match.
+  # With a literal address, the trailing slash on proxy_pass is what strips the
+  # prefix. That form has no equivalent once the address comes from a variable,
+  # so the strip is spelled out as a rewrite instead.
   location = /search/api {
-    proxy_pass http://ddbj_search_api/;
+    rewrite ^/search/api$ / break;
+    proxy_pass $api_backend;
   }
   location /search/api/ {
-    proxy_pass http://ddbj_search_api/;
+    rewrite ^/search/api/(.*)$ /$1 break;
+    proxy_pass $api_backend;
   }
 
   # === Backward compatibility redirects ===
@@ -89,6 +99,6 @@ server {
 
   # === Frontend (catch-all) ===
   location /search {
-    proxy_pass http://ddbj_search_front;
+    proxy_pass $front_backend;
   }
 }
