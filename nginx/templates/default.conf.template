@@ -6,6 +6,56 @@ map $http_user_agent $ddbj_search_blocked_ua {
   "~*Bytespider" 1;
 }
 
+# --- Client address ---
+# Every connection arrives from inside the container network; the real client
+# is only in the X-Forwarded-For set by the external proxy. Only private
+# addresses are trusted, and with real_ip_recursive the right-most untrusted
+# address wins, so a client-supplied X-Forwarded-For cannot choose the result.
+set_real_ip_from 10.0.0.0/8;
+set_real_ip_from 172.16.0.0/12;
+set_real_ip_from 192.168.0.0/16;
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
+
+# X-Forwarded-For for the backends: what we received plus the peer we actually
+# accepted the connection from. $proxy_add_x_forwarded_for appends $remote_addr,
+# which after realip is the restored client address and would be listed twice.
+map $http_x_forwarded_for $ddbj_search_forwarded_for {
+  ""      $realip_remote_addr;
+  default "$http_x_forwarded_for, $realip_remote_addr";
+}
+
+# --- Crawler throttling ---
+# Buckets are shared per kind of client, never per IP. Abusive crawlers spread
+# over tens of thousands of proxy addresses with one or two requests each, so a
+# per-IP limit never sees them, while a single institution pulling a lot of
+# data from one address is ordinary use and must not be slowed down.
+# An empty key means the request is not counted at all.
+
+# Self-declared crawlers: one bucket per crawler name.
+map $http_user_agent $ddbj_search_crawler_name {
+  default "";
+  "~*(?<name>[a-z0-9_.-]*(?:bot|crawler|spider)[a-z0-9_.-]*)" $name;
+}
+
+# Clients claiming a Chrome older than 135, all in one bucket. User-Agent
+# rotating botnets cycle through a pool of old versions, while real Chrome
+# updates itself. Self-declared crawlers are left out: search engine crawlers
+# carry an old Chrome/ token too and would otherwise be starved by the botnet.
+# Keep the threshold about a year and a half behind the current Chrome.
+map "$ddbj_search_crawler_name|$http_user_agent" $ddbj_search_stale_chrome {
+  default "";
+  "~^\|.*Chrome/(?:\d{1,2}|1[0-2]\d|13[0-4])\." "stale-chrome";
+}
+
+limit_req_zone $ddbj_search_crawler_name zone=ddbj_search_crawler:1m rate=10r/s;
+limit_req_zone $ddbj_search_stale_chrome zone=ddbj_search_stale_chrome:1m rate=5r/s;
+
+log_format ddbj_search '$remote_addr - $remote_user [$time_local] "$request" '
+                       '$status $body_bytes_sent "$http_referer" "$http_user_agent" '
+                       'rt=$request_time urt=$upstream_response_time '
+                       'bot=$ddbj_search_crawler_name$ddbj_search_stale_chrome limit=$limit_req_status';
+
 server {
   listen 80;
   listen [::]:80;
@@ -15,11 +65,21 @@ server {
     return 403;
   }
 
+  access_log /var/log/nginx/access.log ddbj_search;
+
+  # Reject over-limit requests right away instead of queueing them: requests
+  # left waiting on a backend end up as client disconnects (499) that drag
+  # ordinary traffic down with them.
+  limit_req zone=ddbj_search_crawler burst=50 nodelay;
+  limit_req zone=ddbj_search_stale_chrome burst=25 nodelay;
+  limit_req_status 429;
+  error_page 429 = @rate_limited;
+
   # --- Common settings ---
   proxy_http_version 1.1;
   proxy_set_header Host $host;
   proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-For $ddbj_search_forwarded_for;
   proxy_set_header X-Forwarded-Proto https;
   # Forward caller-supplied X-Request-ID so the API middleware can echo it back;
   # if absent, $http_x_request_id is empty and the API generates its own UUID.
@@ -44,6 +104,11 @@ server {
   # and a wrong resolver takes down every backend lookup at once.
   set $api_backend "http://ddbj-search-api-${DDBJ_SEARCH_ENV}:8080";
   set $front_backend "http://ddbj-search-front-${DDBJ_SEARCH_ENV}:3000";
+
+  location @rate_limited {
+    add_header Retry-After 60 always;
+    return 429;
+  }
 
   # === favicon ===
   # We intentionally ship no favicon. Browsers still auto-fetch /favicon.ico,

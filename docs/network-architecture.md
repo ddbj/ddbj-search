@@ -156,6 +156,31 @@ internal nginx は backend のアドレスを変数経由の `proxy_pass` で渡
 
 resolver のアドレスは、コンテナ起動時に自身の `/etc/resolv.conf` から読み出して `conf.d` に書き出す (`nginx/docker-entrypoint.d/15-ddbj-resolver.sh`)。環境ごとに固定値で持つと、container network を別 subnet で作り直した時点で古い値になり、しかも resolver が誤っていると個別の backend ではなく全 backend の lookup が同時に落ちる。Docker (embedded DNS) と Podman (network gateway) でアドレスが異なる点も、この導出で吸収している。
 
+## クライアント IP の復元
+
+internal nginx に届く接続の送信元は常にコンテナネットワーク内のアドレスで、実際のクライアントは external nginx が付ける `X-Forwarded-For` にしか現れない。internal nginx は realip module でこれを `$remote_addr` に復元する。アクセスログと、backend に渡す `X-Real-IP` が実クライアントのアドレスになる。
+
+- 信頼する送信元は private address (コンテナネットワーク) だけ。`real_ip_recursive on` で `X-Forwarded-For` の右端から信頼できないアドレスを採るので、クライアントが自分で `X-Forwarded-For` を付けてきても、external nginx が右側に足した値が使われる
+- backend に渡す `X-Forwarded-For` は「受け取った値 + 接続元 (`$realip_remote_addr`)」で組み立てる。`$proxy_add_x_forwarded_for` は `$remote_addr` を追記するので、realip の適用後に使うと復元したクライアントのアドレスが 2 回並ぶ
+
+## crawler の流量制限
+
+制限は **IP 単位ではなく、User-Agent から決めた種別ごとの共有バケツ** で行う。
+
+迷惑な crawler は住宅プロキシ網や cloud の多数の IP に分散し、1 IP あたり 1〜2 リクエストしか出さないので、IP 単位の上限には掛からない。一方で、同一機関 (同一 IP) からの大量取得は正当な利用として普通にある。IP 単位の制限は前者に効かず、後者だけを止めてしまう。
+
+| 種別 | 判定 | 上限 |
+|------|------|------|
+| 自称 crawler | User-Agent に `bot` / `crawler` / `spider` を含む。crawler 名ごとに別のバケツ | crawler ごとに 10 req/s |
+| 古い Chrome を名乗る client | `Chrome/` の major version が 135 未満 (自称 crawler は除く) | 全体で 5 req/s |
+
+- どちらにも当たらないリクエスト (通常のブラウザ、curl / wget / 各言語の HTTP client) は制限しない
+- 古い Chrome の判定は、User-Agent をローテーションする botnet が古い版数のプールを使い回すことに依る。Chrome は自動更新されるので、1 年半以上前の版数を名乗る実ユーザーはほぼいない。しきい値は、その時点の Chrome から 1 年半ほど遅れた版数に保つ
+- 自称 crawler を古い Chrome の判定から除くのは、検索エンジンの crawler が User-Agent に古い `Chrome/` の版数を含めていることがあるため (除かないと botnet と同じバケツに入り、ほぼ全部が弾かれる)
+- 上限を超えたリクエストは backend に渡さず、429 (`Retry-After` 付き) を即座に返す。backend に渡して待たせると、待ちきれない client の切断 (499) が積み上がり、正常なリクエストまで巻き込む
+
+アクセスログには、判定した種別 (`bot=`)、制限の結果 (`limit=`)、応答時間 (`rt=` / `urt=`) を出す。
+
 ## Backward Compatibility
 
 旧 URL (ddbj-ld 時代) からのリダイレクト。
