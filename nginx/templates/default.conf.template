@@ -73,6 +73,9 @@ server {
   limit_req zone=ddbj_search_crawler burst=50 nodelay;
   limit_req zone=ddbj_search_stale_chrome burst=25 nodelay;
   limit_req_status 429;
+  # Every rejection is already in the access log (limit=REJECTED); the default
+  # error-level line per rejection would double the log volume under attack.
+  limit_req_log_level info;
   error_page 429 = @rate_limited;
 
   # --- Common settings ---
