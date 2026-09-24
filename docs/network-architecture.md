@@ -230,7 +230,7 @@ location /entry {
 | api container | `ddbj-search-api-staging` | `ddbj-search-api-staging-release-v<id>` |
 | front container | `ddbj-search-front-staging` | `ddbj-search-front-staging-release-v<id>` |
 | 内部 nginx container | `ddbj-search-nginx-staging` | `ddbj-search-nginx-staging-release-v<id>` |
-| 公開 port (内部 nginx) | a012:18080 | a012:19080 (一時) |
+| 公開 port (内部 nginx) | 18080 | 19080 (一時) |
 | Elasticsearch | `ddbj-search-es-staging` (prev) | **作らない** (prev ES を共有) |
 | converter container | `ddbj-search-converter-staging` (prev) | **動かさない** (= 一時 env では indexing pipeline は走らない) |
 
@@ -250,7 +250,7 @@ prev と new で 1 系統の ES / dblink / const dir を共有する設計。ス
 |  ddbj-search-nginx-staging    |    +-|--- multi-network join (api のみ)       |
 +-------------------------------+      +----------------------------------------+
         ^                                          ^
-        | a012:18080                               | a012:19080
+        | :18080                                   | :19080
         | (external gateway)                       | (external gateway)
 ```
 
