@@ -56,6 +56,18 @@ log_format ddbj_search '$remote_addr - $remote_user [$time_local] "$request" '
                        'rt=$request_time urt=$upstream_response_time '
                        'bot=$ddbj_search_crawler_name$ddbj_search_stale_chrome limit=$limit_req_status';
 
+# Only requests worth investigating are logged: server errors, client
+# disconnects, and anything that took a second or more. The external proxy
+# already keeps a line for every request, so a full log here would only repeat
+# it, and at crawler-flood rates it rotates away within hours.
+# $request_time is "<seconds>.<millis>", so a leading non-zero digit means >= 1s.
+map "$status:$request_time" $ddbj_search_loggable {
+  default 0;
+  "~^5"      1;
+  "~^499:"   1;
+  "~:[1-9]"  1;
+}
+
 server {
   listen 80;
   listen [::]:80;
@@ -65,7 +77,7 @@ server {
     return 403;
   }
 
-  access_log /var/log/nginx/access.log ddbj_search;
+  access_log /var/log/nginx/access.log ddbj_search if=$ddbj_search_loggable;
 
   # Reject over-limit requests right away instead of queueing them: requests
   # left waiting on a backend end up as client disconnects (499) that drag
@@ -73,8 +85,8 @@ server {
   limit_req zone=ddbj_search_crawler burst=50 nodelay;
   limit_req zone=ddbj_search_stale_chrome burst=25 nodelay;
   limit_req_status 429;
-  # Every rejection is already in the access log (limit=REJECTED); the default
-  # error-level line per rejection would double the log volume under attack.
+  # Rejections are not logged one by one: under attack they would be most of
+  # the log. info is below the error_log level, so these lines are dropped.
   limit_req_log_level info;
   error_page 429 = @rate_limited;
 
